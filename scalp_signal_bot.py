@@ -41,10 +41,10 @@ import urllib.request
 from datetime import datetime, timezone
 
 # ----------------------------- AYARLAR -----------------------------
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT"]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "HYPEUSDT", "AVAXUSDT"]
 
 # MT5'te 1 lot kac coin? (Sembole sag tik -> Specification'dan kontrol et)
-CONTRACT_SIZE = {"BTCUSDT": 1, "ETHUSDT": 1, "XRPUSDT": 1, "SOLUSDT": 1}
+CONTRACT_SIZE = {"BTCUSDT": 1, "ETHUSDT": 1, "XRPUSDT": 1, "SOLUSDT": 1, "HYPEUSDT": 1, "AVAXUSDT": 1}
 
 RISK_USD = 500.0            # islem basi risk (%0.5 / 100k)
 MAX_NOTIONAL_USD = 150000.0 # tek islemin max buyuklugu (teminat yetsin diye; ~2 BTC)
