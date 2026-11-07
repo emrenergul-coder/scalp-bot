@@ -2,7 +2,7 @@ name: Scalp Sinyal Botu
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # her 5 dakikada bir sinyal taramasi
+    - cron: "3 * * * *"     # her saat basi (mum kapanisindan 3 dk sonra) sinyal taramasi
     - cron: "0 18 * * *"    # her aksam 21:00 (TR) gunluk rapor
   workflow_dispatch:         # Actions sekmesinden elle calistirmak icin
     inputs:
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
