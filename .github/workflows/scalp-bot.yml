@@ -2,18 +2,30 @@ name: Scalp Sinyal Botu
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # her 5 dakikada bir (GitHub bazen birkac dakika gecikebilir)
+    - cron: "*/5 * * * *"   # her 5 dakikada bir sinyal taramasi
+    - cron: "0 18 * * *"    # her aksam 21:00 (TR) gunluk rapor
   workflow_dispatch:         # Actions sekmesinden elle calistirmak icin
     inputs:
       test:
         description: "Sadece Telegram test mesaji gonder"
         type: boolean
         default: false
+      report:
+        description: "Gunluk raporu simdi gonder"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write            # signals.json kaydini repoya yazabilmek icin
+
+concurrency:
+  group: scalp-bot
+  cancel-in-progress: false
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,6 +38,18 @@ jobs:
         run: |
           if [ "${{ inputs.test }}" = "true" ]; then
             python scalp_signal_bot.py --test
+          elif [ "${{ github.event.schedule }}" = "0 18 * * *" ] || [ "${{ inputs.report }}" = "true" ]; then
+            python scalp_signal_bot.py --report
           else
             python scalp_signal_bot.py --once
+          fi
+      - name: Sinyal kaydini kaydet
+        if: always()
+        run: |
+          if [ -f signals.json ] && [ -n "$(git status --porcelain signals.json)" ]; then
+            git config user.name "scalp-bot"
+            git config user.email "scalp-bot@users.noreply.github.com"
+            git add signals.json
+            git commit -m "sinyal kaydi"
+            for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
           fi
