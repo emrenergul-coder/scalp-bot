@@ -15,6 +15,9 @@ Strateji (sohbette kullandigimizla ayni):
   4) TP1 = 1R (yarisini kapat, SL'yi girise cek), TP2 = 2R.
   5) Lot = RISK_USD / (SL mesafesi * kontrat buyuklugu).
   6) Ayni paritede sinyalden sonra 30 dk bekleme, gunde en fazla MAX_SIGNALS_PER_DAY sinyal.
+  7) Hacim teyidi: donus mumunun hacmi son 20 mum ortalamasinin VOL_MULT katindan az ise sinyal yok.
+  8) Haber filtresi: ForexFactory takviminde USD "High" etkili bir veri (CPI, Fed, NFP...)
+     NEWS_BLOCK_MIN dakika icindeyse sinyal yok; 4 saat icindeki onemli veri mesajda uyari olarak yazar.
 
 KURULUM
 -------
@@ -38,7 +41,9 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+TR = timezone(timedelta(hours=3))  # mesajlardaki saatler Turkiye saati
 
 # ----------------------------- AYARLAR -----------------------------
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "HYPEUSDT", "AVAXUSDT"]
@@ -52,6 +57,10 @@ COMMISSION_PER_LOT = 25.0   # brokerin lot basi komisyonu (USD), sadece bilgi ic
 MAX_SIGNALS_PER_DAY = 8     # gunluk sinyal limiti (gunluk %4.5 kurali icin tampon)
 COOLDOWN_MIN = 30           # ayni paritede iki sinyal arasi bekleme
 POLL_SECONDS = 60           # kac saniyede bir kontrol
+VOL_MULT = 1.2              # donus mumu hacmi >= ortalama hacim x bu katsayi
+NEWS_BLOCK_MIN = 30         # onemli haberden once/sonra bu kadar dakika sinyal verme
+NEWS_COUNTRIES = {"USD"}    # takip edilen ulke(ler); "All" eklenirse hepsi
+NEWS_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -83,6 +92,7 @@ def klines(symbol, interval, limit=300):
                 "h": [float(k[2]) for k in data],
                 "l": [float(k[3]) for k in data],
                 "c": [float(k[4]) for k in data],
+                "v": [float(k[5]) for k in data],
             }
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -175,6 +185,11 @@ def check_symbol(symbol):
     if not (0.5 * a <= dist <= 2.5 * a):
         return None
 
+    vols = m5["v"][i - 20:i]
+    vol_ratio = m5["v"][i] / (sum(vols) / len(vols)) if vols and sum(vols) > 0 else 0
+    if vol_ratio < VOL_MULT:  # hacim teyidi yok
+        return None
+
     cs = CONTRACT_SIZE.get(symbol, 1)
     lot = min(RISK_USD / (dist * cs), MAX_NOTIONAL_USD / (entry * cs))
     risk = lot * dist * cs
@@ -184,7 +199,49 @@ def check_symbol(symbol):
         "risk": risk, "reward2": 2 * risk, "fee": lot * COMMISSION_PER_LOT,
         "symbol": symbol, "side": side, "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
         "dist": dist, "lot": lot, "rsi7": r7[i], "atr": a, "candle_time": m5["t"][i],
+        "vol_ratio": vol_ratio,
     }
+
+
+_news_cache = {"t": 0, "events": None}
+
+
+def high_impact_events():
+    """ForexFactory haftalik takviminden yuksek etkili olaylar: [(datetime_utc, baslik, ulke)]."""
+    if _news_cache["events"] is not None and time.time() - _news_cache["t"] < 3600:
+        return _news_cache["events"]
+    events = []
+    try:
+        for e in http_get_json(NEWS_URL):
+            if e.get("impact") != "High":
+                continue
+            if "All" not in NEWS_COUNTRIES and e.get("country") not in NEWS_COUNTRIES:
+                continue
+            dt = datetime.fromisoformat(e["date"]).astimezone(timezone.utc)
+            events.append((dt, e.get("title", "?"), e.get("country", "")))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Takvim alinamadi: {ex}", file=sys.stderr)
+        events = None
+    _news_cache.update(t=time.time(), events=events)
+    return events
+
+
+def news_check():
+    """(engelle_mi, uyari_metni) dondurur."""
+    events = high_impact_events()
+    if events is None:
+        return False, "Haber takvimi alinamadi, onemli veri saatlerini kendin kontrol et."
+    now = datetime.now(timezone.utc)
+    for dt, title, cc in events:
+        mins = (dt - now).total_seconds() / 60
+        if -NEWS_BLOCK_MIN <= mins <= NEWS_BLOCK_MIN:
+            return True, f"{cc} {title} ({mins:+.0f} dk)"
+    upcoming = sorted((dt, t, c) for dt, t, c in events if 0 < (dt - now).total_seconds() <= 4 * 3600)
+    if upcoming:
+        dt, title, cc = upcoming[0]
+        tr = dt.astimezone(TR).strftime("%d.%m %H:%M TR")
+        return False, f"Yaklasan onemli veri: {cc} {title} - {tr}. Pozisyonu oncesinde kapatmayi dusun."
+    return False, ""
 
 
 def find_chat_id():
@@ -221,7 +278,7 @@ def send_telegram(text):
 
 def signal_text(s):
     name = s["symbol"].replace("USDT", "USD")
-    t = datetime.fromtimestamp(s["candle_time"] / 1000 + 300, tz=timezone.utc).strftime("%H:%M UTC")
+    t = datetime.fromtimestamp(s["candle_time"] / 1000 + 300, tz=TR).strftime("%H:%M TR")
     return (
         f"📊 {name} — {s['side']}\n"
         f"Giris: {fmt(s['entry'])} (piyasa)\n"
@@ -229,9 +286,10 @@ def signal_text(s):
         f"TP1 (1R, yarisini kapat): {fmt(s['tp1'])}\n"
         f"TP2 (2R): {fmt(s['tp2'])}\n"
         f"Lot: {s['lot']:.2f}  (SL'de -{s['risk']:.0f}$ | TP2'de +{s['reward2']:.0f}$ | komisyon ~{s['fee']:.0f}$)\n"
-        f"Stop mesafesi: {fmt(s['dist'])} | ATR5m: {fmt(s['atr'])} | RSI7: {s['rsi7']:.0f}\n"
+        f"Stop mesafesi: {fmt(s['dist'])} | ATR5m: {fmt(s['atr'])} | RSI7: {s['rsi7']:.0f} | Hacim: {s['vol_ratio']:.1f}x ort.\n"
         f"Mum kapanisi: {t}\n"
-        f"⚠️ Fiyat Binance'e gore; MT5 farkini kaydir. Gunluk -%4.5 / toplam -%9 kuralini unutma."
+        + (f"📰 {s['news']}\n" if s.get("news") else "")
+        + f"⚠️ Fiyat Binance'e gore; MT5 farkini kaydir. Gunluk -%4.5 / toplam -%9 kuralini unutma."
     )
 
 
@@ -254,6 +312,11 @@ def main():
                     continue
                 s = check_symbol(sym)
                 if s and s["candle_time"] != last_candle[sym]:
+                    block, s["news"] = news_check()
+                    if block:
+                        print(f"{sym}: haber nedeniyle atlandi ({s['news']})")
+                        last_candle[sym] = s["candle_time"]
+                        continue
                     send_telegram(signal_text(s))
                     last_candle[sym] = s["candle_time"]
                     last_signal_at[sym] = time.time()
@@ -276,6 +339,10 @@ def run_once():
                 continue
             closed_ago = now_ms - (s["candle_time"] + 300_000)
             if 0 <= closed_ago < 300_000:
+                block, s["news"] = news_check()
+                if block:
+                    print(f"{sym}: haber nedeniyle atlandi ({s['news']})")
+                    continue
                 send_telegram(signal_text(s))
                 print(f"{sym}: SINYAL gonderildi ({s['side']})")
             else:
