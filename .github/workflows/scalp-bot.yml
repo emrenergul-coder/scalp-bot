@@ -1,0 +1,31 @@
+name: Scalp Sinyal Botu
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # her 5 dakikada bir (GitHub bazen birkac dakika gecikebilir)
+  workflow_dispatch:         # Actions sekmesinden elle calistirmak icin
+    inputs:
+      test:
+        description: "Sadece Telegram test mesaji gonder"
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Sinyal kontrolu
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ inputs.test }}" = "true" ]; then
+            python scalp_signal_bot.py --test
+          else
+            python scalp_signal_bot.py --once
+          fi
