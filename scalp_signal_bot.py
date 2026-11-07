@@ -187,7 +187,27 @@ def check_symbol(symbol):
     }
 
 
+def find_chat_id():
+    """CHAT_ID girilmemisse: bota en son 'Baslat' diyen sohbetin ID'sini bul."""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        res = http_get_json(url).get("result", [])
+        for upd in reversed(res):
+            msg = upd.get("message") or upd.get("my_chat_member") or {}
+            chat = msg.get("chat") or {}
+            if chat.get("id"):
+                print(f"CHAT_ID bulundu: {chat['id']}")
+                return str(chat["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"getUpdates hatasi: {e}", file=sys.stderr)
+    print("CHAT_ID bulunamadi: Telegram'da bota /start yaz.", file=sys.stderr)
+    return ""
+
+
 def send_telegram(text):
+    global TELEGRAM_CHAT_ID
+    if TELEGRAM_TOKEN and not TELEGRAM_CHAT_ID:
+        TELEGRAM_CHAT_ID = find_chat_id()
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("[TELEGRAM AYARLI DEGIL]\n" + text)
         return
