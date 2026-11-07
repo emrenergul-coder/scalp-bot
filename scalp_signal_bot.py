@@ -16,6 +16,8 @@ Strateji (sohbette kullandigimizla ayni):
   5) Lot = RISK_USD / (SL mesafesi * kontrat buyuklugu).
   6) Ayni paritede sinyalden sonra 30 dk bekleme, gunde en fazla MAX_SIGNALS_PER_DAY sinyal.
   7) Hacim teyidi: donus mumunun hacmi son 20 mum ortalamasinin VOL_MULT katindan az ise sinyal yok.
+  9) Rapor: gonderilen sinyaller signals.json'a yazilir; --report her aksam son 24 saatin
+     sonucunu (TP1/TP2/SL/basabas/acik) ve basari oranini Telegram'a gonderir.
   8) Haber filtresi: ForexFactory takviminde USD "High" etkili bir veri (CPI, Fed, NFP...)
      NEWS_BLOCK_MIN dakika icindeyse sinyal yok; 4 saat icindeki onemli veri mesajda uyari olarak yazar.
 
@@ -61,6 +63,7 @@ VOL_MULT = 1.2              # donus mumu hacmi >= ortalama hacim x bu katsayi
 NEWS_BLOCK_MIN = 30         # onemli haberden once/sonra bu kadar dakika sinyal verme
 NEWS_COUNTRIES = {"USD"}    # takip edilen ulke(ler); "All" eklenirse hepsi
 NEWS_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+SIGNALS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signals.json")
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -97,6 +100,20 @@ def klines(symbol, interval, limit=300):
         except Exception as e:  # noqa: BLE001
             last_err = e
     raise RuntimeError(f"{symbol} {interval} veri alinamadi: {last_err}")
+
+
+def klines_since(symbol, start_ms, interval="5m"):
+    """start_ms'den simdiye kadar kapanmis mumlar (en fazla 1000)."""
+    for host in BINANCE_HOSTS:
+        try:
+            url = (f"{host}/api/v3/klines?symbol={symbol}&interval={interval}"
+                   f"&startTime={int(start_ms)}&limit=1000")
+            data = http_get_json(url)
+            now_ms = int(time.time() * 1000)
+            return [(float(k[2]), float(k[3])) for k in data if int(k[6]) <= now_ms]
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def ema(values, n):
@@ -318,6 +335,7 @@ def main():
                         last_candle[sym] = s["candle_time"]
                         continue
                     send_telegram(signal_text(s))
+                    log_signal(s)
                     last_candle[sym] = s["candle_time"]
                     last_signal_at[sym] = time.time()
                     sent_today += 1
@@ -325,6 +343,89 @@ def main():
             except Exception as e:  # noqa: BLE001
                 print(f"{datetime.now()} {sym} hata: {e}", file=sys.stderr)
         time.sleep(POLL_SECONDS)
+
+
+def load_signals():
+    try:
+        with open(SIGNALS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def log_signal(s):
+    """Gonderilen sinyali dosyaya ekler (son 30 gun tutulur)."""
+    rows = load_signals()
+    rows.append({
+        "t": s["candle_time"] + 300_000,  # mum kapanis zamani (ms)
+        "symbol": s["symbol"], "dir": "short" if "SAT" in s["side"] else "long",
+        "entry": s["entry"], "sl": s["sl"], "tp1": s["tp1"], "tp2": s["tp2"],
+        "lot": round(s["lot"], 4), "risk": round(s["risk"], 2),
+    })
+    cutoff = time.time() * 1000 - 30 * 86400_000
+    rows = [r for r in rows if r["t"] >= cutoff]
+    with open(SIGNALS_FILE, "w") as f:
+        json.dump(rows, f, indent=1)
+
+
+def evaluate(sig):
+    """Sinyalin sonucu: (etiket, R). Ayni mumda hem SL hem TP varsa SL sayilir (temkinli).
+    TP1'de yarisi kapanir ve SL girise cekilir: TP2 = +1.5R, TP1 sonrasi basabas = +0.5R."""
+    bars = klines_since(sig["symbol"], sig["t"])
+    if bars is None:
+        return "veri yok", 0.0
+    short = sig["dir"] == "short"
+    tp1_hit = False
+    for hi, lo in bars:
+        sl_hit = hi >= sig["sl"] if short else lo <= sig["sl"]
+        t1 = lo <= sig["tp1"] if short else hi >= sig["tp1"]
+        t2 = lo <= sig["tp2"] if short else hi >= sig["tp2"]
+        be = hi >= sig["entry"] if short else lo <= sig["entry"]
+        if not tp1_hit:
+            if sl_hit:
+                return "SL", -1.0
+            if t1:
+                tp1_hit = True
+                if t2:
+                    return "TP2", 1.5
+        else:
+            if t2:
+                return "TP2", 1.5
+            if be:
+                return "TP1 + basabas", 0.5
+    return ("TP1 (acik)", 0.5) if tp1_hit else ("acik", 0.0)
+
+
+def daily_report():
+    now_ms = time.time() * 1000
+    rows = [r for r in load_signals() if r["t"] >= now_ms - 86400_000]
+    if not rows:
+        send_telegram("📋 Gunluk rapor: son 24 saatte sinyal gonderilmedi.")
+        return
+    lines, wins, losses, total_r, total_usd = [], 0, 0, 0.0, 0.0
+    for r in rows:
+        label, rr = evaluate(r)
+        if label.startswith("TP"):
+            wins += 1
+        elif label == "SL":
+            losses += 1
+        total_r += rr
+        total_usd += rr * r.get("risk", RISK_USD)
+        t = datetime.fromtimestamp(r["t"] / 1000, tz=TR).strftime("%H:%M")
+        name = r["symbol"].replace("USDT", "USD")
+        yon = "SAT" if r["dir"] == "short" else "AL"
+        lines.append(f"{t} {name} {yon} -> {label} ({rr:+.1f}R)")
+    decided = wins + losses
+    rate = f"%{100 * wins / decided:.0f}" if decided else "-"
+    text = (
+        f"📋 Gunluk rapor (son 24 saat)\n"
+        f"Sinyal: {len(rows)} | TP1+ : {wins} | SL: {losses} | Acik: {len(rows) - decided}\n"
+        f"Basari orani: {rate}\n"
+        f"Toplam: {total_r:+.1f}R (~{total_usd:+.0f}$, komisyon haric)\n\n"
+        + "\n".join(lines)
+        + "\n\nNot: Binance fiyatina gore, sinyale tam uyuldugu varsayilarak hesaplandi."
+    )
+    send_telegram(text)
 
 
 def run_once():
@@ -344,6 +445,7 @@ def run_once():
                     print(f"{sym}: haber nedeniyle atlandi ({s['news']})")
                     continue
                 send_telegram(signal_text(s))
+                log_signal(s)
                 print(f"{sym}: SINYAL gonderildi ({s['side']})")
             else:
                 print(f"{sym}: kurulum eski mumda, atlandi")
@@ -354,6 +456,8 @@ def run_once():
 if __name__ == "__main__":
     if "--once" in sys.argv:
         run_once()
+    elif "--report" in sys.argv:
+        daily_report()
     elif "--test" in sys.argv:
         send_telegram("✅ Test: bot Telegram'a ulasabiliyor.")
     else:
