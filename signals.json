@@ -70,5 +70,69 @@
   "entry": 76.39,
   "score": 2,
   "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "XRP",
+  "dir": -1,
+  "entry": 1.1093,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "DOGE",
+  "dir": -1,
+  "entry": 0.0684,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "ADA",
+  "dir": -1,
+  "entry": 0.1727,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "DOT",
+  "dir": -1,
+  "entry": 0.855,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "APT",
+  "dir": -1,
+  "entry": 0.5623,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "TRX",
+  "dir": -1,
+  "entry": 0.3199,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "ATOM",
+  "dir": -1,
+  "entry": 1.289,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794175199999,
+  "symbol": "BTC",
+  "dir": -1,
+  "entry": 74135.77,
+  "score": 3,
+  "risk": 10.0
  }
 ]
