@@ -382,5 +382,53 @@
   "entry": 78.63,
   "score": 3,
   "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "DOGE",
+  "dir": -1,
+  "entry": 0.06413,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "DOT",
+  "dir": -1,
+  "entry": 0.813,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "APT",
+  "dir": -1,
+  "entry": 0.5319,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "ATOM",
+  "dir": -1,
+  "entry": 1.366,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "LINK",
+  "dir": -1,
+  "entry": 9.773,
+  "score": 3,
+  "risk": 10.0
+ },
+ {
+  "t": 1794610799999,
+  "symbol": "SUI",
+  "dir": -1,
+  "entry": 0.791,
+  "score": 3,
+  "risk": 10.0
  }
 ]
