@@ -686,5 +686,29 @@
   "entry": 0.1296,
   "score": 3,
   "risk": 10.0
+ },
+ {
+  "t": 1794999599999,
+  "symbol": "ATOM",
+  "dir": -1,
+  "entry": 1.294,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1794999599999,
+  "symbol": "AVAX",
+  "dir": -1,
+  "entry": 7.101,
+  "score": 3,
+  "risk": 10.0
+ },
+ {
+  "t": 1794999599999,
+  "symbol": "LTC",
+  "dir": -1,
+  "entry": 44.32,
+  "score": 3,
+  "risk": 10.0
  }
 ]
