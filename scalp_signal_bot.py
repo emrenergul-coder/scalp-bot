@@ -12,8 +12,12 @@ Strateji:
   3) Skor (x/4): 4s + gunluk (EMA20) + haftalik (10 haftalik ort.) + aylik (6 aylik ort.)
      yonlerinden kaci sinyal yonunde. 4/4 en guclu.
   4) Stop %2 (STOP_PCT). +1R'de stop girise, sonra tepe/dipten %1,5 takip (TRAIL_PCT).
-  5) Lot = BAKIYE x RISK_PCT / stop mesafesi.
-  6) Ayni coinde 6 saat bekleme, gunde en fazla MAX_SIGNALS_PER_DAY sinyal.
+  5) Pozisyon sabit POSITION_USD (450 $) -> stop olursa kayip = 450 x %2 = 9 $.
+  6) Sadece skoru MIN_SCORE (4/4) olan sinyaller; ayni coinde 6 saat bekleme,
+     gunde en fazla MAX_SIGNALS_PER_DAY sinyal.
+  6b) Onceki sinyal kurala gore hala aciksa mesajda "atla" uyarisi.
+  6c) Gunluk stop: gun icinde kapanan sinyallerin toplami -DAILY_STOP_USD olursa
+      "bugunluk dur" mesaji ve o gun yeni sinyal yok.
   7) Haber filtresi: ForexFactory'de USD "High" etkili veri +-30 dk icindeyse sinyal yok.
   8) Gonderilen sinyaller signals.json'a yazilir; --report son 24 saatin sonucunu gonderir.
 
@@ -29,17 +33,21 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+import auto_trader
+
 TR = timezone(timedelta(hours=3))  # mesajlardaki saatler Turkiye saati
 
 # ----------------------------- AYARLAR -----------------------------
 SYMBOLS = ["BTC", "ETH", "XRP", "SOL", "AVAX", "HYPE", "DOGE", "LINK", "BNB", "ADA",
            "SUI", "LTC", "DOT", "NEAR", "APT", "ARB", "OP", "TRX", "UNI", "ATOM"]
-BALANCE = 1000.0            # hesap bakiyesi (USD) - lot hesabi icin
-RISK_PCT = 0.01             # islem basi risk (%1 = 10 $)
+BALANCE = 100.0             # hesap bakiyesi (USD)
+POSITION_USD = 450.0        # islem basi pozisyon buyuklugu (USD)
+MIN_SCORE = 4               # sadece bu skor ve ustu gonderilir
+DAILY_STOP_USD = 20.0       # gun icinde bu kadar zarar olursa o gun sinyal yok
 STOP_PCT = 0.02             # stop mesafesi (%2)
 TRAIL_PCT = 0.015           # +1R sonrasi takip mesafesi (%1.5)
 BREAKOUT_BARS = 10          # 1s kirilim penceresi
-MAX_SIGNALS_PER_DAY = 8     # gunluk ust sinir
+MAX_SIGNALS_PER_DAY = 5     # gunluk ust sinir
 COOLDOWN_HOURS = 6          # ayni coinde iki sinyal arasi
 FEE_PCT = 0.00035           # komisyon+spread (pozisyon buyuklugunun orani, tur)
 NEWS_BLOCK_MIN = 30
@@ -144,10 +152,13 @@ def check_symbol(symbol):
     if direction == 0 or (direction > 0 and last["c"] <= hh) or (direction < 0 and last["c"] >= ll):
         return None
     score = sum(1 for v in bias.values() if v == direction)
+    if score < MIN_SCORE:
+        print(f"{symbol}: skor {score}/4 dusuk, atlandi")
+        return None
     entry = last["c"]
     dist = entry * STOP_PCT
-    risk_usd = BALANCE * RISK_PCT
-    qty = risk_usd / dist
+    qty = POSITION_USD / entry
+    risk_usd = POSITION_USD * STOP_PCT
     return {
         "symbol": symbol, "dir": direction, "entry": entry,
         "sl": entry - direction * dist, "tp1": entry + direction * dist, "tp2": entry + 2 * direction * dist,
@@ -250,8 +261,9 @@ def signal_text(s):
         f"SL: {fmt(s['sl'])} (%{STOP_PCT*100:.0f})\n"
         f"+1R: {fmt(s['tp1'])} -> stopu girise cek, sonra %{TRAIL_PCT*100:.1f} takip\n"
         f"2R: {fmt(s['tp2'])}\n"
-        f"Miktar: {s['qty']:.4f} {s['symbol']} (~{s['notional']:.0f}$)  Risk: {s['risk']:.0f}$  "
-        f"Komisyon ~{s['notional']*FEE_PCT:.2f}$\n"
+        f"Miktar: {s['qty']:.4f} {s['symbol']} (~{s['notional']:.0f}$ pozisyon)\n"
+        f"Stop olursa: -{s['risk']:.0f}$  |  +1R: +{s['risk']:.0f}$  |  Komisyon ~{s['notional']*FEE_PCT:.2f}$\n"
+        + (f"⏸ {s['open_note']}\n" if s.get("open_note") else "")
         + (f"📰 {s['news']}\n" if s.get("news") else "")
         + "⚠️ Fiyat Binance'e gore; MT5 farkini kaydir. Lot = miktar / MT5 kontrat buyuklugu."
     )
@@ -277,11 +289,86 @@ def tr_day(ms):
 
 
 # ----------------------------- TARAMA -----------------------------
+def real(rows):
+    return [r for r in rows if r.get("symbol") != "_STOP"]
+
+
+def today_status(rows, now_ms):
+    """Bugunun kapanan sinyal sonucu ($) ve kurala gore hala acik sinyaller."""
+    today = tr_day(now_ms)
+    pnl, still_open = 0.0, []
+    for r in real(rows):
+        if now_ms - r["t"] > 3 * 86400_000:
+            continue
+        try:
+            label, rr = evaluate(r)
+        except Exception as e:  # noqa: BLE001
+            print(f"degerlendirme hatasi {r['symbol']}: {e}", file=sys.stderr)
+            continue
+        if label == "acik":
+            still_open.append(r)
+        elif tr_day(r["t"]) == today:
+            pnl += rr * r.get("risk", POSITION_USD * STOP_PCT)
+    return pnl, still_open
+
+
+def tr_day_start_ms(now_ms):
+    d = datetime.fromtimestamp(now_ms / 1000, tz=TR)
+    return int(d.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+
+
+def auto_housekeeping(rows):
+    """Otomatik acilan pozisyon kapandiysa: artik emirleri iptal et, sonucu bildir."""
+    open_rows = [r for r in rows if r.get("auto_open")]
+    if not open_rows:
+        return
+    pos = auto_trader.open_positions()
+    for r in open_rows:
+        sym = r["symbol"] + "USDT"
+        if sym in pos:
+            continue
+        auto_trader.cancel_all(sym)
+        pnl = auto_trader.symbol_realized(sym, r["auto_opened"] - 60_000)
+        r["auto_open"] = False
+        r["auto_pnl"] = round(pnl, 2)
+        send_telegram(f"🤖 Otomatik islem kapandi: {r['symbol']} {'LONG' if r['dir'] > 0 else 'SHORT'} -> "
+                      f"{pnl:+.2f}$ (komisyon dahil)")
+
+
+def auto_try_open(s, rows, now_ms):
+    """Kurallar uygunsa sinyali borsada otomatik ac. Mesaj icin not dondurur."""
+    if s["score"] < 4:
+        return ""
+    if auto_trader.open_positions():
+        return "🤖 Otomatik: acik pozisyon var, bu sinyal acilmadi (tek pozisyon kurali)."
+    day_pnl = auto_trader.today_realized(tr_day_start_ms(now_ms))
+    if day_pnl <= -DAILY_STOP_USD:
+        return f"🤖 Otomatik: gunluk sonuc {day_pnl:+.0f}$, gunluk stop nedeniyle acilmadi."
+    t = auto_trader.open_trade(s["symbol"], s["dir"], POSITION_USD, STOP_PCT)
+    for r in rows:
+        if r["symbol"] == s["symbol"] and r["t"] == s["candle_close"]:
+            r.update(auto_open=True, auto_opened=t["opened"], auto_qty=t["qty"], auto_entry=t["entry"])
+    ortam = "GERCEK HESAP" if auto_trader.LIVE else "DEMO"
+    return (f"🤖 Otomatik islem ACILDI ({ortam}): {t['qty']} {s['symbol']} @ {t['entry']}\n"
+            f"Borsada stop: {t['sl']}  |  takip stopu {t['act']}'de devreye girer (%{auto_trader.CALLBACK_RATE})"
+            + (f"\n{t['trail_note']}" if t['trail_note'] else ""))
+
+
 def run_once():
     rows = load_signals()
     now_ms = time.time() * 1000
     today = tr_day(now_ms)
-    sent_today = sum(1 for r in rows if tr_day(r["t"]) == today)
+    if auto_trader.enabled():
+        try:
+            auto_housekeeping(rows)
+        except Exception as e:  # noqa: BLE001
+            print(f"otomatik kontrol hatasi: {e}", file=sys.stderr)
+    if any(r.get("symbol") == "_STOP" and tr_day(r["t"]) == today for r in rows):
+        print("Bugun gunluk stop calisti, tarama yok.")
+        save_signals(rows)
+        return
+    sigs = real(rows)
+    sent_today = sum(1 for r in sigs if tr_day(r["t"]) == today)
     candidates = []
     for sym in SYMBOLS:
         try:
@@ -295,15 +382,30 @@ def run_once():
         if now_ms - s["candle_close"] > 3600_000:
             print(f"{sym}: mum eski, atlandi")
             continue
-        if any(r["symbol"] == sym and r["t"] == s["candle_close"] for r in rows):
+        if any(r["symbol"] == sym and r["t"] == s["candle_close"] for r in sigs):
             print(f"{sym}: zaten gonderildi")
             continue
-        if any(r["symbol"] == sym and s["candle_close"] - r["t"] < COOLDOWN_HOURS * 3600_000 for r in rows):
+        if any(r["symbol"] == sym and s["candle_close"] - r["t"] < COOLDOWN_HOURS * 3600_000 for r in sigs):
             print(f"{sym}: bekleme suresi")
             continue
         candidates.append(s)
-    candidates.sort(key=lambda x: -x["score"])  # once en guclu skor
-    block, news = news_check() if candidates else (False, "")
+    if not candidates:
+        save_signals(rows)
+        return
+    pnl_today, still_open = today_status(rows, now_ms)
+    print(f"Bugun kapanan sonuc: {pnl_today:+.2f}$, acik: {[r['symbol'] for r in still_open]}")
+    if pnl_today <= -DAILY_STOP_USD:
+        send_telegram(f"🛑 Gunluk stop: bugun kapanan sinyallerin sonucu {pnl_today:+.0f}$ "
+                      f"(sinir -{DAILY_STOP_USD:.0f}$). Bugunluk yeni sinyal yok, yarin devam.")
+        rows.append({"t": int(now_ms), "symbol": "_STOP", "dir": 0, "entry": 0, "score": 0, "risk": 0})
+        save_signals(rows)
+        return
+    open_note = ""
+    if still_open:
+        names = ", ".join(f"{r['symbol']} {'AL' if r['dir'] > 0 else 'SAT'}" for r in still_open)
+        open_note = f"Onceki sinyal(ler) hala acik gorunuyor ({names}). Zaten pozisyondaysan bu sinyali ATLA."
+    candidates.sort(key=lambda x: -x["score"])
+    block, news = news_check()
     for s in candidates:
         if sent_today >= MAX_SIGNALS_PER_DAY:
             print(f"{s['symbol']}: gunluk sinir doldu")
@@ -312,10 +414,21 @@ def run_once():
             print(f"{s['symbol']}: haber nedeniyle atlandi ({news})")
             continue
         s["news"] = news
+        s["open_note"] = open_note
         send_telegram(signal_text(s))
         rows.append({"t": s["candle_close"], "symbol": s["symbol"], "dir": s["dir"], "entry": s["entry"],
                      "score": s["score"], "risk": s["risk"]})
+        if auto_trader.enabled():
+            try:
+                note = auto_try_open(s, rows, now_ms)
+            except Exception as e:  # noqa: BLE001
+                note = f"🤖 Otomatik islem HATASI: {e}"
+            if note:
+                send_telegram(note)
+                print(note)
         sent_today += 1
+        if not open_note:
+            open_note = f"Bu saatte {s['symbol']} sinyali de gonderildi. Tek pozisyon kuralina gore ikisinden birini sec."
         print(f"{s['symbol']}: SINYAL gonderildi (skor {s['score']}/4)")
     save_signals(rows)
 
@@ -346,11 +459,13 @@ def evaluate(sig):
 
 def daily_report():
     now_ms = time.time() * 1000
-    rows = [r for r in load_signals() if r["t"] >= now_ms - 86400_000]
+    allrows = load_signals()
+    stopped = any(r.get("symbol") == "_STOP" and r["t"] >= now_ms - 86400_000 for r in allrows)
+    rows = [r for r in real(allrows) if r["t"] >= now_ms - 86400_000]
     if not rows:
         send_telegram("📋 Gunluk rapor: son 24 saatte sinyal gonderilmedi.")
         return
-    lines, win, loss, be_n, open_n, total_r = [], 0, 0, 0, 0, 0.0
+    lines, win, loss, be_n, open_n, total_r, rlist = [], 0, 0, 0, 0, 0.0, []
     by_score = {}
     for r in rows:
         try:
@@ -366,6 +481,7 @@ def daily_report():
         else:
             open_n += 1
         total_r += rr
+        rlist.append(rr)
         sc = by_score.setdefault(r.get("score", 0), [0, 0.0])
         sc[0] += 1
         sc[1] += rr
@@ -374,14 +490,15 @@ def daily_report():
         lines.append(f"{t} {r['symbol']} {yon} ({r.get('score', '?')}/4) -> {label} ({rr:+.1f}R)")
     closed = win + loss + be_n
     rate = f"%{100 * win / closed:.0f}" if closed else "-"
-    risk = rows[0].get("risk", BALANCE * RISK_PCT)
+    usd = sum(rr_ * r.get("risk", POSITION_USD * STOP_PCT) for r, rr_ in zip(rows, rlist))
     score_line = "  ".join(f"{k}/4: {v[0]} isl {v[1]:+.1f}R" for k, v in sorted(by_score.items(), reverse=True))
     text = (
         "📋 Gunluk rapor (son 24 saat)\n"
         f"Sinyal: {len(rows)} | Kar: {win} | Basabas: {be_n} | SL: {loss} | Acik: {open_n}\n"
         f"Kazanma orani (kapananlar): {rate}\n"
-        f"Toplam: {total_r:+.1f}R (~{total_r * risk:+.0f}$, komisyon haric)\n"
-        f"Skora gore: {score_line}\n\n"
+        f"Toplam: {total_r:+.1f}R (~{usd:+.0f}$, {POSITION_USD:.0f}$ pozisyonla, komisyon haric)\n"
+        + ("🛑 Bugun gunluk stop calisti.\n" if stopped else "")
+        + f"Skora gore: {score_line}\n\n"
         + "\n".join(lines)
         + "\n\nNot: Sinyale tam uyuldugu ve stopun kurala gore tasindigi varsayildi (Binance fiyati)."
     )
