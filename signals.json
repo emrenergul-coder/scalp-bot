@@ -902,5 +902,21 @@
   "entry": 2.781,
   "score": 3,
   "risk": 10.0
+ },
+ {
+  "t": 1795229999999,
+  "symbol": "NEAR",
+  "dir": -1,
+  "entry": 2.737,
+  "score": 3,
+  "risk": 10.0
+ },
+ {
+  "t": 1795229999999,
+  "symbol": "HYPE",
+  "dir": -1,
+  "entry": 59.33,
+  "score": 2,
+  "risk": 10.0
  }
 ]
