@@ -1038,5 +1038,61 @@
   "entry": 0.0707,
   "score": 3,
   "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "XRP",
+  "dir": -1,
+  "entry": 0.9193,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "DOGE",
+  "dir": -1,
+  "entry": 0.05479,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "ADA",
+  "dir": -1,
+  "entry": 0.1431,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "DOT",
+  "dir": -1,
+  "entry": 0.654,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "TRX",
+  "dir": -1,
+  "entry": 0.3044,
+  "score": 4,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "AVAX",
+  "dir": -1,
+  "entry": 6.61,
+  "score": 3,
+  "risk": 10.0
+ },
+ {
+  "t": 1795399199999,
+  "symbol": "SUI",
+  "dir": -1,
+  "entry": 0.648,
+  "score": 3,
+  "risk": 10.0
  }
 ]
