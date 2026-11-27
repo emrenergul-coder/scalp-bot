@@ -1334,5 +1334,37 @@
   "entry": 66.1,
   "score": 1,
   "risk": 10.0
+ },
+ {
+  "t": 1795759199999,
+  "symbol": "LINK",
+  "dir": 1,
+  "entry": 9.691,
+  "score": 2,
+  "risk": 10.0
+ },
+ {
+  "t": 1795759199999,
+  "symbol": "XRP",
+  "dir": 1,
+  "entry": 0.9706,
+  "score": 1,
+  "risk": 10.0
+ },
+ {
+  "t": 1795759199999,
+  "symbol": "DOGE",
+  "dir": 1,
+  "entry": 0.05812,
+  "score": 1,
+  "risk": 10.0
+ },
+ {
+  "t": 1795759199999,
+  "symbol": "ADA",
+  "dir": 1,
+  "entry": 0.1531,
+  "score": 1,
+  "risk": 10.0
  }
 ]
